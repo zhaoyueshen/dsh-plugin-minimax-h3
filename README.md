@@ -1,5 +1,11 @@
 # dsh-minimax-image
 
+[![version](https://img.shields.io/github/v/release/zhaoyueshen/dsh-plugin-minimax-h3?color=5bcefa&label=version)](https://github.com/zhaoyueshen/dsh-plugin-minimax-h3/releases)
+[![license](https://img.shields.io/github/license/zhaoyueshen/dsh-plugin-minimax-h3?color=blue)](LICENSE)
+[![DSH](https://img.shields.io/badge/DSH-%3E%3D%200.2.0--rc.2-8b5cf6)](https://github.com/zhaoyueshen/dsh-plugin-minimax-h3#安装)
+[![node](https://img.shields.io/badge/node-%3E%3D20-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![platform](https://img.shields.io/badge/platform-web-0ea5e9)](https://github.com/zhaoyueshen/dsh-plugin-minimax-h3#界面)
+
 DeepSeek Harness 的侧边栏出图插件：在「出图」页面里写提示词，调用 MiniMax 图像 API 生成图片，结果直接落在本机磁盘上。
 
 默认模型是 **`MiniMax-H3-Image`**，支持两条能力：
@@ -74,7 +80,32 @@ DeepSeek Harness 的侧边栏出图插件：在「出图」页面里写提示词
 
 > **API key 不入库**：仓库里没有任何 key，只有面板/环境变量两种传入方式。key 只写在本机 `settings.json` 或运行时的 `MINIMAX_API_KEY` 环境变量里，`settings.json`、`history.json`、`*.log` 都已在 `.gitignore` 中排除。提交前可自查：`git grep -n -E "sk-[A-Za-z0-9_-]{16,}"`。
 
-## 安装（本机 profile）
+## 安装
+
+要求：DSH `>= 0.2.0-rc.2`、Node `>= 20`。安装由 DSH 的 plugin manager 执行，需要 `pnpm`（启动器自带的优先，不需要自己装）。
+
+### 方式一：作为 bundle 安装（推荐）
+
+插件声明了 `dsh.bundle.patch`，装完由 profile 的 `dsh.profile.bundles` 自动叠加，**不用手改 `cordis.patch.yml`**。
+
+```powershell
+# 从 GitHub 安装
+dsh plugin --profile desktop add https://github.com/zhaoyueshen/dsh-plugin-minimax-h3
+
+# 本地开发（直接链接工作目录，改完代码热加载）
+dsh plugin --profile desktop add link:D:\projects\dsh-plugin-minimax-h3
+
+# 发布到 npm 之后可以用包名
+dsh plugin --profile desktop add dsh-minimax-image
+```
+
+也可以在 Web 界面的**插件**页里粘贴上面任意一种 spec 安装。安装会写入 profile 的 `dependencies` 与 `dsh.profile.bundles`，并把插件自带的 `cordis.patch.yml` 插进配置树。
+
+host 端热加载；浏览器端刷新一次页面（`Ctrl+R`）才会出现菜单项。
+
+### 方式二：手工挂载（旧做法，仅用于调试）
+
+不想让 plugin manager 接管时，可以只用 junction + patch 块：
 
 ```powershell
 $p = "$env:USERPROFILE\.dsh\profiles\desktop"
@@ -82,8 +113,7 @@ New-Item -ItemType Junction -Path "$p\node_modules\dsh-minimax-image" `
   -Target '<你克隆下来的插件目录>'
 ```
 
-`package.json` 的 `dependencies` 增加 `"dsh-minimax-image": "link:<你克隆下来的插件目录>"`（如 `link:D:/projects/dsh-plugin-minimax-h3`），
-并在 `cordis.patch.yml` 末尾追加：
+`package.json` 的 `dependencies` 增加 `"dsh-minimax-image": "link:<你克隆下来的插件目录>"`，并在 profile 的 `cordis.patch.yml` 末尾追加：
 
 ```yaml
 # >>> dsh-minimax-image (local plugin) >>>
@@ -93,11 +123,15 @@ New-Item -ItemType Junction -Path "$p\node_modules\dsh-minimax-image" `
 # <<< dsh-minimax-image <<<
 ```
 
-host 端会热加载；浏览器端需要刷新一次页面（Ctrl+R）才会出现菜单项。
+两种方式不要同时用：bundle 层和手工 patch 会插入同一个 `id`，导致条目冲突。
 
 ### 卸载
 
-删掉 junction、`dependencies` 里那一行、以及 `cordis.patch.yml` 里的 patch 块即可（安装前的备份在 `~/.dsh/profiles/desktop/*.bak-*-before-minimax`）。
+```powershell
+dsh plugin --profile desktop remove dsh-minimax-image
+```
+
+手工挂载的则删掉 junction、`dependencies` 里那一行、以及 `cordis.patch.yml` 里的 patch 块（安装前的备份在 `~/.dsh/profiles/desktop/*.bak-*-before-minimax`）。
 
 ## 排障
 

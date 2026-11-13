@@ -1,13 +1,13 @@
 {
   "name": "dsh-minimax-image",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "侧边栏出图面板：调用 MiniMax H3 生图与图片编辑，结果直接存到本机。",
-  "private": true,
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
@@ -15,12 +15,16 @@
     "client.js",
     "lib",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
   },
   "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
@@ -33,5 +37,23 @@
       "dsh": ">=0.2.0-rc.2"
     }
   },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "minimax",
+    "image-generation",
+    "text-to-image",
+    "image-edit"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zhaoyueshen/dsh-plugin-minimax-h3.git"
+  },
+  "homepage": "https://github.com/zhaoyueshen/dsh-plugin-minimax-h3#readme",
+  "bugs": {
+    "url": "https://github.com/zhaoyueshen/dsh-plugin-minimax-h3/issues"
+  },
+  "author": "zhaoyueshen",
   "license": "MIT"
 }

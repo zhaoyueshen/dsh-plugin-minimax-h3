@@ -29,22 +29,28 @@ DeepSeek Harness 的侧边栏插件「出图」：在面板里写提示词调 Mi
 ├── client.js           # 浏览器端：面板 UI（手写 React.createElement，无构建步骤）
 ├── lib\minimax.js      # 两代接口的客户端（generateImages / editImages）
 ├── lib\util.js         # 路径、JSON 原子写、日志、时间戳
-├── package.json        # dsh.client 声明（platform: web, immediately）
-├── cordis.patch.yml    # bundle 安装用（本机用 profile patch，不用它）
+├── package.json        # dsh.bundle.patch + dsh.client 声明（platform: web, immediately）
+├── cordis.patch.yml    # bundle 挂载声明（insert id/name = 包名）
 ├── README.md           # 面向使用的文档（功能、路由、模型实测、排障）
 └── scripts\            # 测试脚本，见第 7 节
 ```
 
-挂载方式（本机 profile，不是 bundle）：
+挂载方式（bundle，自 v0.2.1 起）：
 
 ```
-%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-minimax-image  →  junction 指向上面目录
 profile 的 package.json  dependencies: "dsh-minimax-image": "link:<本机克隆目录>"
-profile 的 cordis.patch.yml 末尾:
-    - insert:
-        - id: dsh-minimax-image
-          name: './node_modules/dsh-minimax-image/index.js'
+profile 的 package.json  dsh.profile.bundles 含 "dsh-minimax-image"
+profile 的 cordis.patch.yml 不再需要手写 insert 块——bundle 层会插
 ```
+
+安装/卸载走 plugin manager：
+
+```
+dsh plugin --profile desktop add link:D:\projects\dsh-minimax-image
+dsh plugin --profile desktop remove dsh-minimax-image
+```
+
+旧的「手工 junction + patch 块」仍可用，但不要和 bundle 同时启用（同一 id 会冲突）。
 
 ---
 
