@@ -1,0 +1,6 @@
+# dsh-minimax-image bundle patch.
+# The plugin is normally mounted by a profile row pointing at
+# ./node_modules/dsh-minimax-image/index.js; this file supports bundle installs.
+- insert:
+    - id: dsh-minimax-image
+      name: 'dsh-minimax-image'
