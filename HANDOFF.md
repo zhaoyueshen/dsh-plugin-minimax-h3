@@ -28,6 +28,7 @@ DeepSeek Harness 的侧边栏插件「出图」：在面板里写提示词调 Mi
 ├── index.js            # 服务端：路由、设置、落盘、agent 工具
 ├── client.js           # 浏览器端：面板 UI（手写 React.createElement，无构建步骤）
 ├── lib\minimax.js      # 两代接口的客户端（generateImages / editImages）
+├── lib\billing.js      # 官方账单：GET /account/amount 的汇总（近 7 天实付）
 ├── lib\util.js         # 路径、JSON 原子写、日志、时间戳
 ├── package.json        # dsh.bundle.patch + dsh.client 声明（platform: web, immediately）
 ├── cordis.patch.yml    # bundle 挂载声明（insert id/name = 包名）
@@ -60,7 +61,7 @@ dsh plugin --profile desktop remove dsh-minimax-image
 |---|---|
 | 设置与 API key（明文） | `~/.dsh/minimax-image/settings.json` |
 | 图片 | `~/.dsh/minimax-image/out/<YYYY-MM-DD>/<YYYYMMDD-HHmmss>-N.<jpeg\|png\|webp>` |
-| 历史（上限 40 条） | `~/.dsh/minimax-image/history.json` |
+| 历史（上限 40 条，含 `usage` / `region`） | `~/.dsh/minimax-image/history.json` |
 | 日志 | `~/.dsh/logs/dsh-minimax-image.log` |
 
 ---
@@ -75,7 +76,8 @@ dsh plugin --profile desktop remove dsh-minimax-image
 - 结果网格：点开大图 / **每张小图单独「接着改」**（✦ 按钮）/ 复制路径 / 下载；部分失败有黄色警告条
 - 结果卡右上：**继续编辑**（清空参考图→放入第 1 张→切编辑模式）+ 打开文件夹
 - 大图底部：**保存图片 / 编辑图片 / 打开文件夹 / 关闭**（参考图的大图只有「保存图片」）
-- 历史记录：**编辑图片 / 复用 / 删除**；点缩略图放大；带护栏的条目显示「· 护栏」
+- 历史记录：**单次费用**（编辑图片左边，`约 ¥0.14`，金额加粗，悬停看 token 明细）/ **编辑图片 / 复用 / 删除**；点缩略图放大；带护栏的条目显示「· 护栏」
+- **官方账单卡**：近 7 天账户实付（`GET /account/amount`，服务端缓存 5 分钟，可手动刷新）+ 最新账单时间 + 「消费明细」外链；与单条费用并列，但明确标注按小时汇总、含整个账户
 - 设置面板：API key（脱敏）、站点、保存位置
 - 页面自带滚动条（根容器 `height:100%; overflowY:auto`）
 
@@ -92,6 +94,8 @@ dsh plugin --profile desktop remove dsh-minimax-image
 5. **`history.json` 不要用 PowerShell `Set-Content` 写**。PS 5.1 会加 BOM，`JSON.parse` 直接抛错，历史被当成空数组。用 Node 写。
 6. **H3 编辑的 `size` 固定 `auto`**，画幅由参考图决定；链式「继续编辑」会把裁切误差一路放大。圆盘/主体贴边问题见 `scripts/diagnose-plate.mjs` 的结论：**抱怨式 prompt（"盘子还是不完整"）会被当成画面描述画出来**，必须写正面构图指令。面板的「构图护栏」就是把这条正面指令（`GUARD_SUFFIX`，在 `index.js` 顶部）自动加到请求里。
 7. **护栏只在 wire 上生效**：`applyGuard()` 拼的提示词不进历史、不进面板输入框，历史条目存 `guard` 布尔值。要改护栏文案只改 `GUARD_SUFFIX` 一处；别把后缀写进 `prompt` 再存进历史，否则「复用」会把后缀又双击一次。
+8. **费用不是接口返回的**。H3 只返回 `usage`（`input_tokens_details.text_tokens` / `image_tokens`、`output_tokens_details.image_tokens`），金额是 `client.js` 里 `PRICE_BOOKS` 按官方单价算的；`history.json` 存原始 `usage`、`region` 和 `currency`，老记录没有 `usage` 就退回官方单张参考价表。改价只改 `PRICE_BOOKS`（cny + usd 两套）。**货币按 `REGIONS[].currency`**：现在 `intl`（`api.minimax.chat`）和 `cn`（`api.minimaxi.com`）都是 `CNY`，因为这个 key 在 `api.minimax.io` 上是 invalid api key，控制台账单里的 8160 输出 token 记 ¥0.2040（正好 ¥25/百万）。4K 限时 5 折的条件是**单张交付图 ≥ 1660 万像素**，按 `images[].size` 判断，别按 `area` 判断；截止 2026-11-17 16:00 UTC（北京时间 11-18 00:00）。
+9. **控制台消费明细不能按条对齐**。`https://platform.minimax.cn/console/consumption-detail` 背后是 `GET /account/amount`（`page` / `limit` / `start_date` / `end_date` / `aggregate`），**API key 就能调**（不用 cookie）；但 `charge_records` 是按“小时 + 计费项（输出/文本/参考图）”聚合的，同一小时的多次出图合并成几行，没有 `request_id`，所以只能拿来对账/看总额，不能算单条精确金额。面板的「官方账单」卡就是用它，`lib/billing.js` 只取 `consume_cash_after_voucher_sum` / `consume_token_sum` / `total_cnt` / 最新 `consume_time`；`/bill` 路由缓存 5 分钟，`?refresh=1` 强制重查。账单有延迟（实测今天 12:43 的出图还没出现），且包含体验中心等全账户调用。
 
 ---
 
@@ -100,7 +104,7 @@ dsh plugin --profile desktop remove dsh-minimax-image
 1. 改 `client.js`（UI）→ 刷新页面看效果。
 2. 改 `index.js` / `lib/*`（服务端）→ `node --check` → 插件管理器 disable/enable → 打 `/diag` 确认 `routes=true tool=true`。
 3. 每次改完必跑 `node scripts/client-harness.mjs`（无浏览器跑 client.js 的七个渲染阶段）。
-4. 真实链路验证：`scripts/smoke.mjs`（文生图）、`scripts/edit-smoke.mjs`（编辑）、`scripts/route-edit.mjs`（走面板路由）、`scripts/route-guard.mjs`（护栏 + 张数上限）。
+4. 真实链路验证：`scripts/smoke.mjs`（文生图）、`scripts/edit-smoke.mjs`（编辑）、`scripts/route-edit.mjs`（走面板路由）、`scripts/route-guard.mjs`（护栏 + 张数上限）；改过 usage/费用/账单相关代码再跑 `scripts/usage-check.mjs` 和 `scripts/billing-check.mjs`（都离线、不花钱）。
 
 ---
 
@@ -116,6 +120,8 @@ node scripts/smoke.mjs                   # 文生图 + 坏 key 报错
 node scripts/edit-smoke.mjs <图1> [图2]  # 图片编辑（库层）
 node scripts/route-edit.mjs <图> "提示词" # 走插件自己的 /edit 路由
 node scripts/route-guard.mjs             # 护栏 + 张数上限（走路由，花两次真实出图，跑完还原设置）
+node scripts/usage-check.mjs             # 离线：H3 响应的 usage 块是否进了 meta（不联网）
+node scripts/billing-check.mjs           # 离线：官方账单 /account/amount 的字段解析（不联网）
 node scripts/diagnose-plate.mjs <图>     # 裁切问题的三组对照实验
 ```
 
@@ -150,11 +156,13 @@ node scripts/diagnose-plate.mjs <图>     # 裁切问题的三组对照实验
 
 ## 10. 当前状态
 
-插件在跑（v0.2.0），`diag` 正常（`routes=true, tool=true`），22+ 条历史，key 已配置。
+插件在跑（v0.2.4），`diag` 正常（`routes=true, tool=true`），24 条历史，key 已配置。
 
-最近一次改动（2026-11-13，v0.2.0）：三处小改进——
-1. **构图护栏**：面板开关 → `settings.guard` → `applyGuard()` 只在请求上拼 `GUARD_SUFFIX`；`/generate`/`/edit` 支持单次 `guard` 覆盖；agent 工具加了 `guard` 参数。
-2. **张数 1–10**：面板换成步进器装不下就换模型自动回落；`maxCountFor()` 按 family 给 10 / 9。
-3. **逐张接着改**：结果网格每张小图的 ✦ 按钮走同一个 `continueEditing()`。
+最近一次改动（2026-11-13，v0.2.4）：**单条费用 + 官方账单卡**——
+1. `lib/minimax.js` 把 H3 响应的 `usage` 原样塞进 `meta.usage`；`index.js` 把它、`region` 和 `currency` 写进历史，并从 `/generate`、`/edit` 返回。
+2. `client.js` 新增 `estimateCost()`：有 `usage` 就按 `PRICE_BOOKS` 的 token 单价算；老记录没 `usage` 就按官方单张参考价表估；4K 单图 ≥ 1660 万像素自动 5 折；货币按 `REGIONS[].currency`（当前两个站点都是 CNY）。「编辑图片」左边显示 `约 ¥0.14`（四舍五入到 2 位小数，「约」和金额加粗，system-ui，与按钮同字体），悬停看 token 明细。
+3. 生成完成的 toast 也带本次费用；`scripts/usage-check.mjs` 离线校验 usage 不丢。
+4. **币种纠正**：实测该 key 在 `api.minimax.io` 报 `invalid api key`，控制台 `account/amount` 返回的金额是人民币（8160 输出 token = ¥0.2040），所以 `intl`/`cn` 都标成 `CNY`，不再显示 `$`。
+5. **官方账单卡**：新增 `lib/billing.js` + `GET /bill?days=7`，用 API key 调控制台同一个 `/account/amount`，展示近 7 天账户实付、最新账单时间和「消费明细」外链；缓存 5 分钟，可手动刷新。单条金额仍按 token 估，账单只做总额对账（按小时聚合、有延迟、含全账户调用）。
 
-验证：`route-guard.mjs` 18 项全过（真出图 + 真编辑），`client-harness.mjs` 七阶段全过。上一版改动是大图「复制路径」改「打开文件夹」、服务端 `/open` 增强为 file→父目录、失败退回 `cmd /c start`。
+验证：`client-harness.mjs` 七阶段 + 账单卡、字体断言全过（含 USD usage 价、CNY 表估价、CN+4K 折扣三种费用分支），`usage-check.mjs` / `billing-check.mjs` 通过。上一版是 v0.2.0 的护栏 / 张数步进器 / 逐张接着改。

@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({
     const { useCallback, useEffect, useMemo, useRef, useState } = React
 
     const BASE = '/dsh-minimax-image'
-    const VERSION = '0.2.0'
+    const VERSION = '0.2.4'
 
     const C = {
       page: 'var(--dsw-alias-bg-base, #f6f7f9)',
@@ -107,6 +107,180 @@ window.__ModuleLoader__.load({
       if (Number.isNaN(date.getTime())) return ''
       const pad = (n) => String(n).padStart(2, '0')
       return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+    }
+
+    // --- cost -------------------------------------------------------------
+    // MiniMax returns usage, not money: H3 bills text input, reference-image
+    // input and output images per million tokens, while the legacy image-01 API
+    // bills per image. The host stores the raw `usage` block; rows written
+    // before it did fall back to the official per-image example prices.
+    //
+    // Rates read 2026-11-13 from platform.minimax.io (USD, intl site) and
+    // platform.minimax.cn (CNY, cn site). 4K output (any delivered image at
+    // least 16.6 MP) is 50% off through 2026-11-17 16:00 UTC / 11-18 00:00 +08.
+    const PRICE_AS_OF = '2026-11-13'
+    const PROMO_ENDS_AT = Date.parse('2026-11-17T16:00:00Z')
+    const PROMO_MIN_PIXELS = 16600000
+    const PRICE_BOOKS = {
+      usd: {
+        currency: 'USD',
+        symbol: '$',
+        h3: {
+          'MiniMax-H3-Image': { text: 2.3, imageIn: 1.5, imageOut: 3.8 },
+          'MiniMax-H3-Image-Highspeed': { text: 2.3, imageIn: 3, imageOut: 7.6 },
+        },
+        legacy: { 'image-01': 0.0035, 'image-01-live': 0.0035 },
+        // [text-to-image, 1 reference, 3 references], per image.
+        table: {
+          'MiniMax-H3-Image': {
+            '1K': [0.02179, 0.02654, 0.03563],
+            '2K': [0.02333, 0.02658, 0.04177],
+            '4K': [0.06879, 0.07312, 0.07914],
+          },
+          'MiniMax-H3-Image-Highspeed': {
+            '1K': [0.03529, 0.04525, 0.06037],
+            '2K': [0.03622, 0.04576, 0.06069],
+            '4K': [0.13001, 0.13673, 0.15407],
+          },
+        },
+      },
+      cny: {
+        currency: 'CNY',
+        symbol: '¥',
+        h3: {
+          'MiniMax-H3-Image': { text: 15, imageIn: 10, imageOut: 25 },
+          'MiniMax-H3-Image-Highspeed': { text: 15, imageIn: 20, imageOut: 50 },
+        },
+        legacy: { 'image-01': 0.025, 'image-01-live': 0.025 },
+        table: {
+          'MiniMax-H3-Image': {
+            '1K': [0.143, 0.1744, 0.2346],
+            '2K': [0.1531, 0.1747, 0.2746],
+            '4K': [0.4522, 0.4809, 0.5211],
+          },
+          'MiniMax-H3-Image-Highspeed': {
+            '1K': [0.2319, 0.2978, 0.3982],
+            '2K': [0.238, 0.3011, 0.4003],
+            '4K': [0.855, 0.8998, 1.0146],
+          },
+        },
+      },
+    }
+
+    function pixelCount(size) {
+      const match = /^\s*(\d+)\s*[x×]\s*(\d+)\s*$/i.exec(String(size ?? ''))
+      return match ? Number(match[1]) * Number(match[2]) : 0
+    }
+
+    /** Edits inherit their size from the references, so price by delivered pixels. */
+    function priceArea(area, images) {
+      if (area === '1K' || area === '2K' || area === '4K') return area
+      let pixels = 0
+      for (const image of images) pixels = Math.max(pixels, pixelCount(image?.size))
+      if (pixels >= 8000000) return '4K'
+      if (pixels >= 2500000) return '2K'
+      return pixels ? '1K' : '2K'
+    }
+
+    function tablePrice(row, refs) {
+      const count = Math.max(0, Math.round(Number(refs) || 0))
+      if (count === 0) return row[0]
+      if (count === 1) return row[1]
+      if (count === 2) return (row[1] + row[2]) / 2
+      return row[2] + (count - 3) * ((row[2] - row[1]) / 2)
+    }
+
+    function promoApplies(images, at) {
+      const when = at instanceof Date ? at.getTime() : Date.parse(at ?? '')
+      if (!Number.isFinite(when) || when >= PROMO_ENDS_AT) return false
+      return images.some((image) => pixelCount(image?.size) >= PROMO_MIN_PIXELS)
+    }
+
+    function tokenLabel(tokens) {
+      return `${Math.round(Number(tokens) || 0).toLocaleString('en-US')} tok`
+    }
+
+    /**
+     * What one request cost. `usage` is what the API billed; `images` / `refs`
+     * cover history rows that predate usage capture. `currency` follows the
+     * account (CNY on the CN-billed hosts this panel uses).
+     */
+    function estimateCost(input, fallbackCurrency) {
+      const record = input ?? {}
+      const book = (record.currency || fallbackCurrency) === 'USD' ? PRICE_BOOKS.usd : PRICE_BOOKS.cny
+      const images = Array.isArray(record.images) ? record.images : []
+      const usage = record.usage && typeof record.usage === 'object' ? record.usage : null
+      const count = images.length || Number(usage?.generated_images) || Number(record.n) || 1
+      const rates = book.h3[record.model]
+      const promo = promoApplies(images, record.at)
+
+      if (rates && usage && (usage.total_tokens || usage.input_tokens || usage.output_tokens)) {
+        const text = Number(usage.input_tokens_details?.text_tokens) || Number(usage.input_tokens) || 0
+        const imageIn = Number(usage.input_tokens_details?.image_tokens) || 0
+        const imageOut = Number(usage.output_tokens_details?.image_tokens) || Number(usage.output_tokens) || 0
+        let amount = (text * rates.text + imageIn * rates.imageIn + imageOut * rates.imageOut) / 1000000
+        if (promo) amount *= 0.5
+        return {
+          amount,
+          currency: book.currency,
+          symbol: book.symbol,
+          method: 'usage',
+          promo,
+          note: `按 ${record.model} 的接口用量估算：文本 ${tokenLabel(text)}、参考图 ${tokenLabel(imageIn)}、输出 ${tokenLabel(imageOut)}`
+            + `（${book.symbol}${rates.text} / ${book.symbol}${rates.imageIn} / ${book.symbol}${rates.imageOut} 每百万 tok）`
+            + (promo ? '，已计入 4K 限时 5 折' : ''),
+        }
+      }
+
+      if (book.legacy[record.model]) {
+        const unit = book.legacy[record.model]
+        return {
+          amount: unit * count,
+          currency: book.currency,
+          symbol: book.symbol,
+          method: 'per-image',
+          promo: false,
+          note: `${record.model} 按张计费：${book.symbol}${unit} × ${count} 张`,
+        }
+      }
+
+      if (rates) {
+        const level = priceArea(record.area, images)
+        const unit = tablePrice(book.table[record.model][level], record.refs)
+        let amount = unit * count
+        if (promo) amount *= 0.5
+        return {
+          amount,
+          currency: book.currency,
+          symbol: book.symbol,
+          method: 'table',
+          promo,
+          note: `这条 ${record.model} 记录没有 token 用量，按官方单张参考价估算（${level} · `
+            + `${Number(record.refs) ? `${record.refs} 张参考图` : '文生图'} · ${count} 张）`
+            + (promo ? '，已计入 4K 限时 5 折' : ''),
+        }
+      }
+
+      return null
+    }
+
+    function formatCost(cost) {
+      const amount = Number(cost?.amount)
+      if (!cost || !Number.isFinite(amount) || amount <= 0) return ''
+      // The row badge prefixes 约; keep every amount at two decimals.
+      return `${cost.symbol || '$'}${amount.toFixed(2)}`
+    }
+
+    /** Official totals are shown at two decimals as well. */
+    function formatMoney(amount, currency) {
+      const value = Number(amount)
+      if (!Number.isFinite(value)) return ''
+      return `${currency === 'USD' ? '$' : '¥'}${value.toFixed(2)}`
+    }
+
+    function costTitle(cost) {
+      const unit = cost.currency === 'USD' ? '美元' : '人民币'
+      return `${cost.note ? `${cost.note}；` : ''}按 MiniMax 官方价目（${PRICE_AS_OF}，${unit}）估算，最终以账单为准。`
     }
 
     // --- icons ------------------------------------------------------------
@@ -265,6 +439,9 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState('')
       const [result, setResult] = useState(null)
       const [history, setHistory] = useState([])
+      const [bill, setBill] = useState(null)
+      const [billError, setBillError] = useState('')
+      const [billLoading, setBillLoading] = useState(false)
       const [lightbox, setLightbox] = useState(null)
       const [toast, setToast] = useState('')
       const [showSettings, setShowSettings] = useState(false)
@@ -308,6 +485,19 @@ window.__ModuleLoader__.load({
         }
       }, [])
 
+      const loadBill = useCallback(async (refresh = false) => {
+        setBillLoading(true)
+        try {
+          const payload = await api(`/bill?days=7${refresh ? '&refresh=1' : ''}`)
+          setBill(payload.bill ?? null)
+          setBillError('')
+        } catch (err) {
+          setBillError(err?.message ?? '账单查询失败')
+        } finally {
+          setBillLoading(false)
+        }
+      }, [])
+
       useEffect(() => {
         let alive = true
         ;(async () => {
@@ -324,12 +514,15 @@ window.__ModuleLoader__.load({
           } catch (err) {
             if (alive) setBootError(err?.message ?? String(err))
           }
-          if (alive) loadHistory()
+          if (alive) {
+            loadHistory()
+            loadBill()
+          }
         })()
         return () => {
           alive = false
         }
-      }, [applySettings, loadHistory])
+      }, [applySettings, loadHistory, loadBill])
 
       useEffect(() => {
         if (!running) return undefined
@@ -376,13 +569,21 @@ window.__ModuleLoader__.load({
             })
           setResult(payload)
           loadHistory()
-          notify(`已生成 ${payload.images?.length ?? 0} 张，用时 ${((payload.ms ?? 0) / 1000).toFixed(1)}s`)
+          const cost = estimateCost(payload, settings?.currency)
+          const message = `已生成 ${payload.images?.length ?? 0} 张，用时 ${((payload.ms ?? 0) / 1000).toFixed(1)}s`
+          notify(cost
+            ? h('span', { key: 'cost-toast' }, [
+              message,
+              '，本次',
+              h('strong', { key: 'amount' }, `约 ${formatCost(cost)}`),
+            ])
+            : message)
         } catch (err) {
           setError(err?.message ?? String(err))
         } finally {
           setRunning(false)
         }
-      }, [prompt, ratio, count, model, area, mode, refs, options.models, loadHistory, notify, guard])
+      }, [prompt, ratio, count, model, area, mode, refs, options.models, loadHistory, notify, guard, settings?.currency])
 
       const saveSettings = useCallback(async () => {
         setSaving(true)
@@ -1146,80 +1347,155 @@ window.__ModuleLoader__.load({
         ]))),
       ]) : null
 
+      const billUrl = settings?.currency === 'USD'
+        ? 'https://platform.minimax.io/console/consumption-detail'
+        : 'https://platform.minimax.cn/console/consumption-detail'
+
+      const billAmount = bill ? formatMoney(bill.total, bill.currency) : ''
+      const billCard = h(Card, { key: 'bill', style: { marginBottom: 14, padding: '13px 16px' } }, [
+        h('div', { key: 'row', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } }, [
+          h('span', { key: 't', style: { font: FONT, fontWeight: 600, color: C.text } }, '官方账单'),
+          h('span', {
+            key: 'v',
+            title: bill
+              ? `近 ${bill.days} 天（${bill.since} ~ ${bill.until}）账户实际消费 ${billAmount}；含体验中心等全部调用，按小时汇总，可能有延迟。`
+              : (billError || '正在查询 MiniMax 官方消费接口'),
+            style: {
+              font: '600 15px/1.2 system-ui, sans-serif', color: C.text,
+              fontVariantNumeric: 'tabular-nums',
+            },
+          }, bill ? billAmount : billLoading ? '查询中…' : billError ? '暂不可用' : '查询中…'),
+          h('span', {
+            key: 'l',
+            style: { font: '11.5px/1.4 system-ui, sans-serif', color: C.muted },
+          }, bill ? `近 ${bill.days} 天账户实际消费` : '近 7 天账户实际消费'),
+          h('div', { key: 'sp', style: { flex: 1 } }),
+          h('button', {
+            key: 'r',
+            type: 'button',
+            title: '重新查询官方账单（服务端缓存 5 分钟）',
+            onClick: () => loadBill(true),
+            disabled: billLoading,
+            style: {
+              height: 28, padding: '0 9px', borderRadius: 8, flexShrink: 0,
+              border: `1px solid ${C.border}`, background: C.card, color: C.muted,
+              font: '11.5px/1 system-ui, sans-serif', cursor: billLoading ? 'wait' : 'pointer',
+              opacity: billLoading ? 0.6 : 1,
+            },
+          }, billLoading ? '刷新中…' : '刷新'),
+          h('a', {
+            key: 'o',
+            href: billUrl,
+            target: '_blank',
+            rel: 'noreferrer',
+            title: '打开 MiniMax 控制台的消费明细（官方页面）',
+            style: {
+              display: 'inline-flex', alignItems: 'center', height: 28, padding: '0 9px',
+              borderRadius: 8, border: `1px solid ${C.border}`, background: C.card,
+              color: C.text, font: '11.5px/1 system-ui, sans-serif',
+              textDecoration: 'none', flexShrink: 0,
+            },
+          }, '消费明细 ↗'),
+        ]),
+        h('div', {
+          key: 'note',
+          style: { font: '11px/1.5 system-ui, sans-serif', color: C.faint, marginTop: 4 },
+        }, billError
+          ? '官方账单暂不可用，可先点右侧「消费明细」查看'
+          : bill
+            ? bill.records === 0
+              ? `近 ${bill.days} 天暂无账单记录（账单可能有延迟）`
+              : `截至 ${bill.latest || bill.until} · 按小时汇总，可能比出图晚几小时；含体验中心等全部调用`
+            : '正在向 MiniMax 查询官方账单…'),
+      ])
+
       const historyCard = history.length ? h(Card, { key: 'hist' }, [
         h('div', { key: 'h', style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 } }, [
           h('span', { key: 't', style: { font: FONT, fontWeight: 600, color: C.text } }, '最近生成'),
           h('span', { key: 'c', style: { font: '11.5px/1.4 system-ui, sans-serif', color: C.faint } }, `共 ${history.length} 条`),
         ]),
         h('div', { key: 'list', style: { display: 'flex', flexDirection: 'column', gap: 8 } },
-          history.slice(0, 8).map((entry) => h('div', {
-            key: entry.id,
-            style: {
-              display: 'flex', alignItems: 'center', gap: 10, padding: '7px 9px',
-              borderRadius: 10, border: `1px solid ${C.border}`, background: C.card,
-            },
-          }, [
-            h('div', { key: 'thumbs', style: { display: 'flex', gap: 4, flexShrink: 0 } },
-              entry.images.slice(0, 3).map((image) => h('img', {
-                key: image.rel,
-                src: `${image.url}&t=${encodeURIComponent(entry.at)}`,
-                alt: '',
-                loading: 'lazy',
-                onClick: () => setLightbox({ url: image.url, name: image.name, path: image.path || image.rel }),
-                style: { width: 34, height: 34, objectFit: 'cover', borderRadius: 6, cursor: 'zoom-in', border: `1px solid ${C.border}` },
-              }))),
-            h('div', { key: 'body', style: { flex: 1, minWidth: 0 } }, [
-              h('div', {
-                key: 'p',
-                style: { font: '12.5px/1.5 system-ui, sans-serif', color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                title: entry.prompt,
-              }, entry.prompt),
-              h('div', {
-                key: 'm',
-                style: { font: '11px/1.5 system-ui, sans-serif', color: C.faint, marginTop: 1 },
-              }, `${entry.kind === 'edit' ? '编辑 · ' : ''}${timeLabel(entry.at)} · ${entry.images.length} 张 · ${entry.aspectRatio === 'auto' ? '原图尺寸' : entry.aspectRatio} · ${formatBytes(entry.images.reduce((sum, image) => sum + (image.bytes || 0), 0))}${entry.guard ? ' · 护栏' : ''}`),
-            ]),
-            h('button', {
-              key: 'edit',
-              type: 'button',
-              title: '清空参考图，放入这张接着改',
-              onClick: () => {
-                const first = entry.images?.[0]
-                if (first) continueEditing({ url: first.url, name: first.name, bytes: first.bytes || 0 })
-              },
+          history.slice(0, 8).map((entry) => {
+            const cost = estimateCost(entry, settings?.currency)
+            return h('div', {
+              key: entry.id,
               style: {
-                border: `1px solid ${C.border}`, background: C.card, color: C.text,
-                borderRadius: 8, height: 28, padding: '0 9px',
-                font: '11.5px/1 system-ui, sans-serif', cursor: 'pointer', flexShrink: 0,
+                display: 'flex', alignItems: 'center', gap: 10, padding: '7px 9px',
+                borderRadius: 10, border: `1px solid ${C.border}`, background: C.card,
               },
-            }, '编辑图片'),
-            h('button', {
-              key: 're',
-              type: 'button',
-              onClick: () => {
-                setPrompt(entry.prompt)
-                setRatio(entry.aspectRatio)
-                if (entry.aspectRatio === 'auto' || entry.kind === 'edit') setMode('edit')
-                textareaRef.current?.focus()
-                notify('已把提示词填回输入框')
-              },
-              style: {
-                border: `1px solid ${C.border}`, background: C.card, color: C.muted,
-                borderRadius: 8, height: 28, padding: '0 9px',
-                font: '11.5px/1 system-ui, sans-serif', cursor: 'pointer', flexShrink: 0,
-              },
-            }, '复用'),
-            h('button', {
-              key: 'del',
-              type: 'button',
-              title: '删除这条记录和图片',
-              onClick: () => deleteHistory(entry.id),
-              style: {
-                border: 'none', background: 'transparent', color: C.faint,
-                cursor: 'pointer', padding: 4, display: 'flex', flexShrink: 0,
-              },
-            }, h(Icon, { name: 'close', size: 14 })),
-          ]))),
+            }, [
+              h('div', { key: 'thumbs', style: { display: 'flex', gap: 4, flexShrink: 0 } },
+                entry.images.slice(0, 3).map((image) => h('img', {
+                  key: image.rel,
+                  src: `${image.url}&t=${encodeURIComponent(entry.at)}`,
+                  alt: '',
+                  loading: 'lazy',
+                  onClick: () => setLightbox({ url: image.url, name: image.name, path: image.path || image.rel }),
+                  style: { width: 34, height: 34, objectFit: 'cover', borderRadius: 6, cursor: 'zoom-in', border: `1px solid ${C.border}` },
+                }))),
+              h('div', { key: 'body', style: { flex: 1, minWidth: 0 } }, [
+                h('div', {
+                  key: 'p',
+                  style: { font: '12.5px/1.5 system-ui, sans-serif', color: C.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                  title: entry.prompt,
+                }, entry.prompt),
+                h('div', {
+                  key: 'm',
+                  style: { font: '11px/1.5 system-ui, sans-serif', color: C.faint, marginTop: 1 },
+                }, `${entry.kind === 'edit' ? '编辑 · ' : ''}${timeLabel(entry.at)} · ${entry.images.length} 张 · ${entry.aspectRatio === 'auto' ? '原图尺寸' : entry.aspectRatio} · ${formatBytes(entry.images.reduce((sum, image) => sum + (image.bytes || 0), 0))}${entry.guard ? ' · 护栏' : ''}`),
+              ]),
+              cost ? h('span', {
+                key: 'cost',
+                title: costTitle(cost),
+                style: {
+                  display: 'inline-flex', alignItems: 'center', height: 24, padding: '0 7px',
+                  borderRadius: 7, border: `1px solid ${C.border}`, background: C.soft,
+                  color: C.muted, font: '600 11.5px/1 system-ui, sans-serif',
+                  fontVariantNumeric: 'tabular-nums', flexShrink: 0, cursor: 'help',
+                },
+              }, `约 ${formatCost(cost)}`) : null,
+              h('button', {
+                key: 'edit',
+                type: 'button',
+                title: '清空参考图，放入这张接着改',
+                onClick: () => {
+                  const first = entry.images?.[0]
+                  if (first) continueEditing({ url: first.url, name: first.name, bytes: first.bytes || 0 })
+                },
+                style: {
+                  border: `1px solid ${C.border}`, background: C.card, color: C.text,
+                  borderRadius: 8, height: 28, padding: '0 9px',
+                  font: '11.5px/1 system-ui, sans-serif', cursor: 'pointer', flexShrink: 0,
+                },
+              }, '编辑图片'),
+              h('button', {
+                key: 're',
+                type: 'button',
+                onClick: () => {
+                  setPrompt(entry.prompt)
+                  setRatio(entry.aspectRatio)
+                  if (entry.aspectRatio === 'auto' || entry.kind === 'edit') setMode('edit')
+                  textareaRef.current?.focus()
+                  notify('已把提示词填回输入框')
+                },
+                style: {
+                  border: `1px solid ${C.border}`, background: C.card, color: C.muted,
+                  borderRadius: 8, height: 28, padding: '0 9px',
+                  font: '11.5px/1 system-ui, sans-serif', cursor: 'pointer', flexShrink: 0,
+                },
+              }, '复用'),
+              h('button', {
+                key: 'del',
+                type: 'button',
+                title: '删除这条记录和图片',
+                onClick: () => deleteHistory(entry.id),
+                style: {
+                  border: 'none', background: 'transparent', color: C.faint,
+                  cursor: 'pointer', padding: 4, display: 'flex', flexShrink: 0,
+                },
+              }, h(Icon, { name: 'close', size: 14 })),
+            ])
+          })),
       ]) : null
 
       const lightboxView = lightbox ? h('div', {
@@ -1341,6 +1617,7 @@ window.__ModuleLoader__.load({
           composer,
           runningCard,
           results,
+          billCard,
           historyCard,
           h('footer', {
             key: 'foot',

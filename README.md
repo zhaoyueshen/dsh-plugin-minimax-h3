@@ -22,7 +22,26 @@ DeepSeek Harness 的侧边栏出图插件：在「出图」页面里写提示词
 - 左侧菜单「出图」（`sidebar.panellist`，order 30，排在「备份」上方）
 - 主区域面板（`main`，key 与侧边栏 id 一致：`dsh-minimax-image`）
 
-面板包含：**文生图 / 图片编辑** 两个模式、提示词输入（Ctrl+Enter 生成）、示例提示词、参考图（拖拽 / 选择 / Ctrl+V 粘贴，最多 16 张，缩略图标注「图N」可单独移除）、比例选择（带比例预览方块）、清晰度档位（H3 专属：1K / 2K / 4K）、张数 1–10（步进器，H3 上限 10、上一代 9）、**构图护栏**开关、模型选择、生成进度、结果网格（点开大图 / 逐张「接着改」/ 复制路径 / 下载）、部分失败的警告条、最近生成历史（可编辑图片 / 复用提示词 / 删除）、设置面板（API key、站点、保存位置）。
+面板包含：**文生图 / 图片编辑** 两个模式、提示词输入（Ctrl+Enter 生成）、示例提示词、参考图（拖拽 / 选择 / Ctrl+V 粘贴，最多 16 张，缩略图标注「图N」可单独移除）、比例选择（带比例预览方块）、清晰度档位（H3 专属：1K / 2K / 4K）、张数 1–10（步进器，H3 上限 10、上一代 9）、**构图护栏**开关、模型选择、生成进度、结果网格（点开大图 / 逐张「接着改」/ 复制路径 / 下载）、部分失败的警告条、**官方账单**（近 7 天账户实际消费 + 消费明细入口）、最近生成历史（**单次费用** / 可编辑图片 / 复用提示词 / 删除）、设置面板（API key、站点、保存位置）。
+
+### 费用估算
+
+「最近生成」每一行的 **编辑图片** 左边会显示这次请求的大致花费，例如 `约 ¥0.14`（四舍五入到 2 位小数，「约」和金额加粗）；金额按账户的计费货币显示（当前使用的两个站点都是人民币 `¥`，若以后接入美元站点则显示 `$`）。
+
+MiniMax 不返回金额，只返回 `usage`：文本输入、参考图输入、输出图片各用了多少 token。插件把 `usage` 存进 `history.json`，再按官方 token 单价换算；单张交付图片 ≥ 1660 万像素的 4K 请求会自动套上限时 5 折。早于本功能的历史没有 `usage`，退回官方「单张生成费用参考」表估算，提示里会写明是估算。
+
+### 官方账单
+
+面板里的「官方账单」卡会调用控制台消费明细背后的 `GET /account/amount`（用面板里的 API key），显示近 7 天账户实付金额、最新账单时间和「消费明细」入口。服务端缓存 5 分钟，卡上的「刷新」可强制重查。
+
+- 它包含该账户的**全部调用**（包括体验中心等），不只是本插件；按小时 + 计费项汇总，**不能拆到单条出图**
+- 账单可能比出图晚几小时，今天刚出的图不一定马上出现
+- 单条费用仍按上面的 token 用量估算；官方总额用来对账
+
+- 价目读取日期 **2026-11-13**；官方调价后改 `client.js` 顶部的 `PRICE_BOOKS` 即可
+- 数字只是估算（prompt 增强会带来 token 浮动），最终以 MiniMax 控制台账单为准
+- 图片编辑的参考图也算钱：参考图越多，输入图片 token 越高
+- 控制台「[消费明细](https://platform.minimax.cn/console/consumption-detail)」能看到官方金额，但它按**小时 + 计费项**汇总，同一小时多次出图会合并，不能精确对上每一条历史；单条费用仍按上面的 token 用量估算
 
 ### 构图护栏
 
@@ -67,6 +86,7 @@ DeepSeek Harness 的侧边栏出图插件：在「出图」页面里写提示词
 | `POST /dsh-minimax-image/generate` | 文生图：生成并写盘，返回相对路径与可直接展示的 URL；可带 `guard` 覆盖开关 |
 | `POST /dsh-minimax-image/edit` | 图片编辑：`images` 传 base64 data URI 数组（1–16 张），请求体上限 72 MB；可带 `guard` |
 | `GET /dsh-minimax-image/history` | 最近生成记录 |
+| `GET /dsh-minimax-image/bill?days=7` | 官方账单汇总（控制台 `/account/amount`；`refresh=1` 跳过 5 分钟缓存） |
 | `POST /dsh-minimax-image/history/delete` | 删除一条记录（连同它的图片文件） |
 | `GET /dsh-minimax-image/file?name=<rel>` | 回读图片（限制在保存目录内，防路径穿越） |
 | `POST /dsh-minimax-image/open` | 在文件管理器中打开保存目录 |
@@ -75,7 +95,7 @@ DeepSeek Harness 的侧边栏出图插件：在「出图」页面里写提示词
 
 - 设置与 key：`~/.dsh/minimax-image/settings.json`（明文，仅本机）
 - 图片：默认 `~/.dsh/minimax-image/out/<YYYY-MM-DD>/<YYYYMMDD-HHmmss>-N.<jpeg|png|webp>`，可在面板里改（扩展名跟随接口返回的 `output_format`）
-- 历史：`~/.dsh/minimax-image/history.json`（上限 40 条）
+- 历史：`~/.dsh/minimax-image/history.json`（上限 40 条，含每次请求的 `usage` token 用量与 `region` 站点）
 - 日志：`~/.dsh/logs/dsh-minimax-image.log`
 
 > **API key 不入库**：仓库里没有任何 key，只有面板/环境变量两种传入方式。key 只写在本机 `settings.json` 或运行时的 `MINIMAX_API_KEY` 环境变量里，`settings.json`、`history.json`、`*.log` 都已在 `.gitignore` 中排除。提交前可自查：`git grep -n -E "sk-[A-Za-z0-9_-]{16,}"`。
@@ -179,7 +199,9 @@ node scripts/smoke.mjs                       # 文生图：真调接口，落一
 node scripts/edit-smoke.mjs <图1> [图2]       # 图片编辑：库层直连
 node scripts/route-edit.mjs <图> "改成蓝色调"  # 走插件自己的 /edit 路由（面板用的那条）
 node scripts/route-guard.mjs                 # 护栏 + 张数上限：走路由，花两次真实出图（1:1@1K + 编辑）
-node scripts/client-harness.mjs              # 无浏览器跑一遍 client.js 的注册与渲染路径（7 个阶段）
+node scripts/usage-check.mjs                 # 离线校验：H3 的 usage token 块确实进了 meta（不打接口、不花钱）
+node scripts/billing-check.mjs               # 离线校验：官方账单汇总的字段解析（不打接口、不花钱）
+node scripts/client-harness.mjs              # 无浏览器跑一遍 client.js 的注册与渲染路径（7 个阶段 + 账单卡）
 ```
 
 `route-guard.mjs` 不需要在这里配 key（host 端已经有），跑完会把改过的设置还原；它验证的是 `guard` 真进了请求、历史存的是原话、以及 `image-01`/H3 的张数上限。

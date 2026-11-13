@@ -8,6 +8,7 @@
  *   - GET  /dsh-minimax-image/settings        -> masked settings + model/ratio/area/region lists
  *   - POST /dsh-minimax-image/settings        -> persists key / region / model / ratio / area / n / guard / outputDir
  *   - GET  /dsh-minimax-image/history         -> recent generations
+ *   - GET  /dsh-minimax-image/bill            -> official account spend (console billing API)
  *   - POST /dsh-minimax-image/history/delete  -> drops one entry and its files
  *   - POST /dsh-minimax-image/open            -> reveals a file's folder (or the output root)
  *   - GET  /dsh-minimax-image/diag            -> self check: version, registrations, paths
@@ -21,6 +22,7 @@ import { readFile, stat, unlink, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, extname, join } from 'node:path'
 import { AREAS, ASPECTS, MODELS, MODEL_IDS, REGIONS, editImages, generateImages, modelDef } from './lib/minimax.js'
+import { fetchBill } from './lib/billing.js'
 import {
   clampCount,
   dayStamp,
@@ -36,7 +38,7 @@ import {
 export const name = 'dsh-minimax-image'
 export const inject = []
 
-const VERSION = '0.2.0'
+const VERSION = '0.2.4'
 const ROUTE_PREFIX = '/dsh-minimax-image'
 const TOOL_NAME = 'minimax_image'
 /** The edits API accepts 1..16 references with a 64 MiB body; leave room for JSON. */
@@ -99,6 +101,8 @@ export function apply(ctx, config = {}) {
   }
   let history = []
   let cancelling = false
+  /** Last successful official-bill lookup; the endpoint is slow and rate-finite. */
+  let billCache = null
 
   const registrations = { routes: false, tool: false }
   const startedAt = Date.now()
@@ -146,6 +150,7 @@ export function apply(ctx, config = {}) {
       hasKey: Boolean(key),
       keyMask: key ? maskKey(key) : '',
       region: settings.region,
+      currency: REGIONS[settings.region]?.currency ?? 'CNY',
       model: settings.model,
       aspectRatio: settings.aspectRatio,
       area: settings.area,
@@ -228,7 +233,12 @@ export function apply(ctx, config = {}) {
       n: extra.n,
       refs: extra.refs ?? 0,
       guard: extra.guard === true,
+      region: extra.region ?? currentRegion(),
+      currency: REGIONS[extra.region ?? currentRegion()]?.currency ?? 'CNY',
       ms: result.ms,
+      // Token usage is the only billing fact the API gives us; the panel turns
+      // it into money with the published rates.
+      usage: result.meta?.usage ?? null,
       warnings: result.warnings ?? [],
       images: created.map((item) => ({ rel: item.rel, name: item.name, bytes: item.bytes, size: item.size })),
     }
@@ -247,7 +257,11 @@ export function apply(ctx, config = {}) {
       refs: entry.refs,
       n: entry.n,
       guard: entry.guard,
+      region: entry.region,
+      currency: entry.currency,
+      at: entry.at,
       ms: result.ms,
+      usage: entry.usage,
       images: created,
       warnings: entry.warnings,
       directory,
@@ -291,6 +305,7 @@ export function apply(ctx, config = {}) {
       area: def.area ? area : '',
       n,
       guard,
+      region,
     })
   }
 
@@ -333,6 +348,7 @@ export function apply(ctx, config = {}) {
       n: result.images.length,
       refs: refs.length,
       guard,
+      region,
     })
   }
 
@@ -460,8 +476,30 @@ export function apply(ctx, config = {}) {
         settings = normalizeSettings(next)
         await ensureDir(settings.outputDir)
         await writeJsonAtomic(settingsPath, settings)
+        billCache = null
         log(`settings saved; region=${settings.region}; key=${settings.apiKey ? 'set' : 'missing'}`)
         return writeJson(res, 200, { ok: true, settings: publicSettings() })
+      }
+
+      if (action === 'bill' && req.method === 'GET') {
+        await settingsReady
+        const days = Math.max(1, Math.min(30, Number(url.searchParams.get('days')) || 7))
+        const refresh = url.searchParams.get('refresh') === '1'
+        const region = currentRegion()
+        const apiKey = currentApiKey()
+        const cacheKey = `${region}|${days}|${apiKey}`
+        if (!refresh && billCache?.key === cacheKey && Date.now() - billCache.at < 5 * 60 * 1000) {
+          return writeJson(res, 200, { ok: true, bill: billCache.value, cached: true })
+        }
+        const bill = await fetchBill({
+          apiKey,
+          base: REGIONS[region].base,
+          days,
+          currency: REGIONS[region].currency ?? 'CNY',
+        })
+        billCache = { key: cacheKey, at: Date.now(), value: bill }
+        log(`bill: ${bill.since}..${bill.until} total=${bill.total} ${bill.currency} (${bill.records} rows)`)
+        return writeJson(res, 200, { ok: true, bill })
       }
 
       if (action === 'generate' && req.method === 'POST') {
