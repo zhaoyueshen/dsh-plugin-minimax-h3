@@ -1,7 +1,7 @@
 /**
  * Smoke test for lib.editImages (H3 image editing).
  *
- *   $env:MINIMAX_API_KEY = 'sk-api-...'
+ *   $env:MINIMAX_API_KEY = '<your MiniMax API key>'
  *   node scripts/edit-smoke.mjs <image1> [image2] [prompt]
  */
 

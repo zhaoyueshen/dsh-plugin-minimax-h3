@@ -72,15 +72,17 @@ DeepSeek Harness 的侧边栏出图插件：在「出图」页面里写提示词
 - 历史：`~/.dsh/minimax-image/history.json`（上限 40 条）
 - 日志：`~/.dsh/logs/dsh-minimax-image.log`
 
+> **API key 不入库**：仓库里没有任何 key，只有面板/环境变量两种传入方式。key 只写在本机 `settings.json` 或运行时的 `MINIMAX_API_KEY` 环境变量里，`settings.json`、`history.json`、`*.log` 都已在 `.gitignore` 中排除。提交前可自查：`git grep -n -E "sk-[A-Za-z0-9_-]{16,}"`。
+
 ## 安装（本机 profile）
 
 ```powershell
 $p = "$env:USERPROFILE\.dsh\profiles\desktop"
 New-Item -ItemType Junction -Path "$p\node_modules\dsh-minimax-image" `
-  -Target 'D:\projects\dsh-minimax-image'
+  -Target '<你克隆下来的插件目录>'
 ```
 
-`package.json` 的 `dependencies` 增加 `"dsh-minimax-image": "link:D:/projects/dsh-minimax-image"`，
+`package.json` 的 `dependencies` 增加 `"dsh-minimax-image": "link:<你克隆下来的插件目录>"`（如 `link:D:/projects/dsh-plugin-minimax-h3`），
 并在 `cordis.patch.yml` 末尾追加：
 
 ```yaml
@@ -138,7 +140,7 @@ H3 的响应是 OpenAI 结构：`data[]` 里每项要么有 `url`，要么有 `e
 ## 自测脚本
 
 ```powershell
-$env:MINIMAX_API_KEY = 'sk-api-...'
+$env:MINIMAX_API_KEY = '<你的 MiniMax API key>'   # 只在跑自测脚本时需要；面板里存的 key 不会被脚本读取
 node scripts/smoke.mjs                       # 文生图：真调接口，落一张图，并验证坏 key 的报错
 node scripts/edit-smoke.mjs <图1> [图2]       # 图片编辑：库层直连
 node scripts/route-edit.mjs <图> "改成蓝色调"  # 走插件自己的 /edit 路由（面板用的那条）

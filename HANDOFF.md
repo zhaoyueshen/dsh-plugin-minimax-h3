@@ -24,7 +24,7 @@ DeepSeek Harness 的侧边栏插件「出图」：在面板里写提示词调 Mi
 ## 2. 文件在哪
 
 ```
-D:\projects\dsh-minimax-image\
+<仓库根目录>\
 ├── index.js            # 服务端：路由、设置、落盘、agent 工具
 ├── client.js           # 浏览器端：面板 UI（手写 React.createElement，无构建步骤）
 ├── lib\minimax.js      # 两代接口的客户端（generateImages / editImages）
@@ -38,8 +38,8 @@ D:\projects\dsh-minimax-image\
 挂载方式（本机 profile，不是 bundle）：
 
 ```
-C:\Users\yuesh\.dsh\profiles\desktop\node_modules\dsh-minimax-image  →  junction 指向上面目录
-profile 的 package.json  dependencies: "dsh-minimax-image": "link:D:/projects/dsh-minimax-image"
+%USERPROFILE%\.dsh\profiles\desktop\node_modules\dsh-minimax-image  →  junction 指向上面目录
+profile 的 package.json  dependencies: "dsh-minimax-image": "link:<本机克隆目录>"
 profile 的 cordis.patch.yml 末尾:
     - insert:
         - id: dsh-minimax-image
@@ -101,8 +101,8 @@ profile 的 cordis.patch.yml 末尾:
 ## 7. 测试脚本
 
 ```powershell
-cd D:\projects\dsh-minimax-image
-$env:MINIMAX_API_KEY = 'sk-api-...'
+cd <本机克隆目录>
+$env:MINIMAX_API_KEY = '<你的 MiniMax API key>'
 
 node --check index.js; node --check client.js
 node scripts/client-harness.mjs          # 七阶段结构校验（不需网络）

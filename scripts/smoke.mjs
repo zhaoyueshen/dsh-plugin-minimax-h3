@@ -1,7 +1,7 @@
 /**
  * Smoke test for the host-side MiniMax client.
  *
- *   $env:MINIMAX_API_KEY = 'sk-api-...'
+ *   $env:MINIMAX_API_KEY = '<your MiniMax API key>'
  *   node scripts/smoke.mjs
  *
  * Verifies a real generation (bytes on disk) and the error path for a bad key.
@@ -44,7 +44,7 @@ for (let index = 0; index < result.images.length; index += 1) {
 
 // Error path: an invalid key must surface a readable message, not a stack trace.
 try {
-  await generateImages({ apiKey: 'sk-api-invalid-key-for-test', prompt: 'x', region: 'intl' })
+  await generateImages({ apiKey: 'invalid-key-for-test', prompt: 'x', region: 'intl' })
   console.log('UNEXPECTED: invalid key succeeded')
 } catch (error) {
   console.log(`expected failure: ${error.message}`)
